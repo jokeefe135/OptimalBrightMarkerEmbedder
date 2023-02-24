@@ -37,6 +37,7 @@ from bpy.props import (
     BoolProperty,
     StringProperty,
     EnumProperty,
+    FloatVectorProperty,
 )
 
 
@@ -358,19 +359,12 @@ class OBJECT_OT_optimalembed(Operator):
     )
     
     codes: bpy.props.IntProperty(
-        name = "Number of Tags",
+        name = "Number of Codes",
         default = 1,
         min = 1,
         max = 10,
         description = "The number of places the code will be embedded in the object (or number of optimal locations displayed if \"Embedding Code?\" is unchecked))",
     )
-    """
-    embedding: bpy.props.BoolProperty(
-        name = "Embedding Code?",
-        default = True,
-        description = "Check if you are embedding an SVG code, no if you just want to see the optimal location(s) for codes",
-    )
-    """
     codename: bpy.props.StringProperty(
         name = "File Name of Code",
         default = "my-qr-code.svg",
@@ -391,11 +385,6 @@ class OBJECT_OT_optimalembed(Operator):
         min = 0,
         max = 100,
         description = "The desired thickness (in Blender units) of the embedded code",
-    )
-    usingloc: bpy.props.BoolProperty(
-        name = "Enabled",
-        default = False,
-        description = "Check if you are using this mode",
     )
     usingemb: bpy.props.BoolProperty(
         name = "Enabled",
@@ -440,6 +429,49 @@ class OBJECT_OT_optimalembed(Operator):
         max = 360,
         description = "This sets the local Z rotation for all codes",
     )
+    sequential: bpy.props.BoolProperty(
+        name = "Sequential Arucos",
+        default = False,
+        description = "Embed ArUcos with increasing IDs (0, 1, 2, 3, etc.)",
+    )
+    usinggeometric: bpy.props.BoolProperty(
+        name = "Enabled",
+        default = False,
+        description = "Check if you are using this mode",
+    )
+    geometry: bpy.props.EnumProperty(
+        name = "Geometry",
+        description = "Select the geometry you would like to use to embed",
+        items = [
+            ('OP1', "Linear", "Embed codes along a line"),
+            ('OP2', "Radial", "Embed codes along a ring"),
+            ('OP3', "Spherical", "Embed codes along a sphere"),
+        ]
+    )
+    start: bpy.props.FloatVectorProperty(
+        name = "Start Point",
+        default = (0, 0, 0),
+        description = "The (x, y, z) start of the embedding line",
+    )
+    end: bpy.props.FloatVectorProperty(
+        name = "End Point",
+        default = (1, 1, 1),
+        description = "The (x, y, z) end of the embedding line",
+    )
+    linelength: bpy.props.FloatProperty(
+        name = "Length of Line",
+        default = 0,
+        min = 0,
+        max = 5000,
+        description = "The length of the embedding line",
+    )
+    sidelength: bpy.props.FloatProperty(
+        name = "Code Side Length",
+        default = 0,
+        min = 0,
+        max = 5000,
+        description = "The side length of the embedded codes",
+    )
     
 
     """
@@ -462,125 +494,156 @@ class OBJECT_OT_optimalembed(Operator):
         layout.label(text = f"{np.format_float_scientific(sizex, 1)} x {np.format_float_scientific(sizey, 1)} x {np.format_float_scientific(sizez, 1)} (X x Y x Z)")
         
 
-        # Optimal Location Mode.
-        
-        box = layout.box()
-        
-        box.label(text="Determine Optimal Locations")
-        
-        row = box.row()
-        row.prop(self, "usingloc")
-        row.enabled = not self.usingemb and not self.usingman
-        
-        row = box.row()
-        row.prop(self, "maxfaces")
-        row.prop(self, "sharpness")
-        row.prop(self, "accuracy")
-        row.enabled = self.usingloc
-        
-        row = box.row()
-        row.prop(self, "mins")
-        row.prop(self, "maxs")
-        row.enabled = self.usingloc
-        
-        row = box.row()
-        row.prop(self, "codes")
-        row.enabled = self.usingloc
-        
-        row = box.row()
-        row.prop(self, "ignorebottom")
-        row.enabled = self.usingloc
-        
-        layout.row().separator()
-        
-        
         # Optimal Embed Mode.
         
         box = layout.box()
         
-        box.label(text="Embed Optimal Locations")
+        box.label(text="Optimal Embedding")
         
         row = box.row()
         row.prop(self, "usingemb")
-        row.enabled = not self.usingloc and not self.usingman
+        row.enabled = not self.usingman and not self.usinggeometric
+        
+        if self.usingemb:
+            row = box.row()
+            row.prop(self, "maxfaces")
+            row.prop(self, "sharpness")
+            row.prop(self, "accuracy")
+            row.enabled = self.usingemb
+            
+            row = box.row()
+            row.prop(self, "sequential")
+            row.enabled = self.usingemb
+            
+            if not self.sequential:
+                row = box.row()
+                row.prop(self, "codename")
+                row.enabled = self.usingemb
+            
+            row = box.row()
+            row.prop(self, "offset")
+            row.enabled = self.usingemb
+            
+            row = box.row()
+            row.prop(self, "thickness")
+            row.enabled = self.usingemb
+            
+            row = box.row()
+            row.prop(self, "mins")
+            row.prop(self, "maxs")
+            row.enabled = self.usingemb
+            
+            row = box.row()
+            row.prop(self, "codes")
+            row.enabled = self.usingemb
+            
+            row = box.row()
+            row.prop(self, "ignorebottom")
+            row.enabled = self.usingemb
+            
+            row = box.row()
+            row.prop(self, "aligncode")
+            row.prop(self, "alignangle")
+            row.enabled = self.usingemb
+            
+            layout.row().separator()
+        
+        # Geometric Embed Mode.
+        
+        box = layout.box()
+        
+        box.label(text="Geometric Embedding")
         
         row = box.row()
-        row.prop(self, "maxfaces")
-        row.prop(self, "sharpness")
-        row.prop(self, "accuracy")
-        row.enabled = self.usingemb
+        row.prop(self, "usinggeometric")
+        row.enabled = not self.usingemb and not self.usingman
         
-        row = box.row()
-        row.prop(self, "codename")
-        row.enabled = self.usingemb
-        
-        row = box.row()
-        row.prop(self, "offset")
-        row.enabled = self.usingemb
-        
-        row = box.row()
-        row.prop(self, "thickness")
-        row.enabled = self.usingemb
-        
-        row = box.row()
-        row.prop(self, "mins")
-        row.prop(self, "maxs")
-        row.enabled = self.usingemb
-        
-        row = box.row()
-        row.prop(self, "codes")
-        row.enabled = self.usingemb
-        
-        row = box.row()
-        row.prop(self, "ignorebottom")
-        row.enabled = self.usingemb
-        
-        row = box.row()
-        row.prop(self, "aligncode")
-        row.prop(self, "alignangle")
-        row.enabled = self.usingemb
-        
-        layout.row().separator()
-        
+        if self.usinggeometric:
+            row = box.row()
+            row.prop(self, "geometry")
+            row.enabled = self.usinggeometric
+            
+            if self.geometry == 'OP1':
+                row = box.row()
+                row.prop(self, "start")
+                row.enabled = self.usinggeometric
+                
+                row = box.row()
+                row.prop(self, "end")
+                
+                row = box.row()
+                row.prop(self, "linelength")
+                
+            
+            row = box.row()
+            row.prop(self, "sequential")
+            row.enabled = self.usinggeometric
+            
+            if not self.sequential:
+                row = box.row()
+                row.prop(self, "codename")
+                row.enabled = self.usinggeometric
+            
+            row = box.row()
+            row.prop(self, "offset")
+            row.enabled = self.usinggeometric
+            
+            row = box.row()
+            row.prop(self, "thickness")
+            row.enabled = self.usinggeometric
+            
+            row = box.row()
+            row.prop(self, "sidelength")
+            
+            row = box.row()
+            row.prop(self, "codes")
+            
+            layout.row().separator()
         
         # Manual Embed Mode.
         
         box = layout.box()
         
-        box.label(text="Embed Manual Locations")
+        box.label(text="Manual Embedding")
         
         row = box.row()
         row.prop(self, "usingman")
-        row.enabled = not self.usingloc and not self.usingemb
+        row.enabled = not self.usingemb and not self.usinggeometric
         
-        row = box.row()
-        row.prop(self, "sharpness")
-        row.prop(self, "accuracy")
-        row.enabled = self.usingman
-        
-        row = box.row()
-        row.prop(self, "codename")
-        row.enabled = self.usingman
-        
-        row = box.row()
-        row.prop(self, "offset")
-        row.enabled = self.usingman
-        
-        row = box.row()
-        row.prop(self, "thickness")
-        row.enabled = self.usingman
-        
-        row = box.row()
-        row.prop(self, "mins")
-        row.prop(self, "maxs")
-        row.enabled = self.usingman
-        
-        row = box.row()
-        row.prop(self, "aligncode")
-        row.prop(self, "alignangle")
-        row.enabled = self.usingman
-        
-        layout.row().separator()
+        if self.usingman:
+            row = box.row()
+            row.prop(self, "sharpness")
+            row.prop(self, "accuracy")
+            row.enabled = self.usingman
+            
+            row = box.row()
+            row.prop(self, "sequential")
+            row.enabled = self.usingman
+            
+            if not self.sequential:
+                row = box.row()
+                row.prop(self, "codename")
+                row.enabled = self.usingman
+            
+            row = box.row()
+            row.prop(self, "offset")
+            row.enabled = self.usingman
+            
+            row = box.row()
+            row.prop(self, "thickness")
+            row.enabled = self.usingman
+            
+            row = box.row()
+            row.prop(self, "mins")
+            row.prop(self, "maxs")
+            row.enabled = self.usingman
+            
+            row = box.row()
+            row.prop(self, "aligncode")
+            row.prop(self, "alignangle")
+            row.enabled = self.usingman
+            
+            layout.row().separator()
 
 
         
@@ -615,7 +678,7 @@ class OBJECT_OT_optimalembed(Operator):
         ## List to store the approx flat patches
         patches = []
         
-        if not self.usingman: # We don't want to find the locations in script if the user selected the manual option
+        if self.usingemb: # We don't want to find the locations in script if the user selected the manual option
             bpy.ops.object.duplicate()
             objcopy = bpy.context.object
             ## Select obj
@@ -780,40 +843,6 @@ class OBJECT_OT_optimalembed(Operator):
 
             patcharray = convert_to_array(patch, dimx, dimy, interval, startloc)
             
-            """
-            ## If the user wants to align the codes with the longest edge
-            if self.aligncode:
-                pt1 = None
-                pt2 = None
-                for i in range (len(patcharray)):
-                    if patcharray[i][1]:
-                        pt1 = (1, i) # x,y
-                        break
-                for j in range (len(patcharray)):
-                    if patcharray[j][len(patcharray[0]) - 2]:
-                        pt2 = (len(patcharray[0]) - 2, j) # x,y
-                        break
-                if pt1 == None or pt2 == None: break
-                myang = math.atan((pt2[1] - pt1[1]) / (pt2[0] - pt1[0]))
-                if iter == 4:
-                    bpy.ops.transform.rotate(value=-myang + math.radians(self.alignangle), orient_axis='Z', orient_type='LOCAL', orient_matrix_type='LOCAL', constraint_axis=(False, False, True), mirror=False, use_proportional_edit=False, proportional_edit_falloff='SMOOTH', proportional_size=1, use_proportional_connected=False, use_proportional_projected=False, snap=False, snap_elements={'INCREMENT'}, use_snap_project=False, snap_target='CLOSEST', use_snap_self=True, use_snap_edit=True, use_snap_nonedit=True, use_snap_selectable=False, release_confirm=True)
-            
-                    ## Get the x and y bounds of the patch
-                    min_x = min([vert.co.x for vert in patch.data.vertices])
-                    max_x = max([vert.co.x for vert in patch.data.vertices])
-                    min_y = min([vert.co.y for vert in patch.data.vertices])
-                    max_y = max([vert.co.y for vert in patch.data.vertices])
-                    ## Choose the detail (dimensions) of the array in the x direction
-                    dimx = int(300 * self.accuracy) + 1
-                    ## Calculate dimension in the y direction to ensure the interval is consistent
-                    dimy = int(dimx * ((max_y - min_y) / (max_x - min_x))) + 1
-                    ## Calculate the interval
-                    interval = (max_x - min_x) / dimx
-                    ## Starting location for ray casts
-                    startloc = (min_x, max_y, 1)
-
-                    patcharray = convert_to_array(patch, dimx, dimy, interval, startloc)
-            """
 
             ####### GET THE LARGEST INTERIOR RECTANGLE IN THE PATCH #######
 
@@ -879,8 +908,7 @@ class OBJECT_OT_optimalembed(Operator):
                 ## Rotate (subtract current rotation, add the user's desired rotation)
                 bpy.ops.transform.rotate(value=-ang + math.radians(self.alignangle), orient_axis='Z', orient_type='LOCAL', orient_matrix_type='LOCAL', constraint_axis=(False, False, True), mirror=False, use_proportional_edit=False, proportional_edit_falloff='SMOOTH', proportional_size=1, use_proportional_connected=False, use_proportional_projected=False, snap=False, snap_elements={'INCREMENT'}, use_snap_project=False, snap_target='CLOSEST', use_snap_self=True, use_snap_edit=True, use_snap_nonedit=True, use_snap_selectable=False, release_confirm=True)
             
-            
-            if not self.usingloc: ## If not just finding the optimal locations
+            if not self.sequential: ## If the user is embedding their own code
                 codecol = bpy.data.collections.get(self.codename)
                 ## Join the curves in the code SVG only if this is the first iteration
                 if iter == 0:
@@ -894,11 +922,11 @@ class OBJECT_OT_optimalembed(Operator):
                         bpy.ops.object.join()
                     ## Get the single, joined object
                     codeobj = codecol.all_objects[0]
-                    
+                        
                     ## Set origin to the center of the code
                     bpy.context.scene.cursor.location = (max(vert.co.x for vert in codeobj.data.vertices)/2, max(vert.co.y for vert in codeobj.data.vertices)/2, 0)
                     bpy.ops.object.origin_set(type='ORIGIN_CURSOR')
-                    
+                        
                     ## Duplicate and store the code mesh
                     bpy.ops.object.select_all(action='DESELECT')
                     bpy.context.view_layer.objects.active = codeobj
@@ -913,30 +941,56 @@ class OBJECT_OT_optimalembed(Operator):
                         face.select = True
                     bpy.ops.mesh.remove_doubles()   
                     bpy.ops.object.mode_set(mode="OBJECT") 
-                    
+                        
+                        
                 ## Else, we already have a stored codemesh. We just need to copy it and work on the copy.
                 else:
                     bpy.context.view_layer.objects.active = self.codemesh
                     self.codemesh.select_set(state = True)
                     bpy.ops.object.duplicate()
                     codeobj = bpy.context.object
+            
+            else: ## If the user is embedding sequential arucos
+                bpy.ops.import_curve.svg(filepath=f"Arucos/{iter}.svg")
+                codecol = bpy.data.collections.get(f"{iter}.svg")
+                
+                ## Convert all of the curves to meshes
+                for curveobj in codecol.all_objects:
+                    curveobj.select_set(state = True)
+                    bpy.context.view_layer.objects.active = curveobj
+                    bpy.ops.object.convert(target='MESH')
+                bpy.context.view_layer.objects.active = codecol.all_objects[0]
+                with bpy.context.temp_override(active_object=bpy.context.active_object, selected_editable_objects=codecol.all_objects):
+                    bpy.ops.object.join()
+                ## Get the single, joined object
+                codeobj = codecol.all_objects[0]
                     
+                ## Set origin to the center of the code
+                bpy.context.scene.cursor.location = (max(vert.co.x for vert in codeobj.data.vertices)/2, max(vert.co.y for vert in codeobj.data.vertices)/2, 0)
+                bpy.ops.object.origin_set(type='ORIGIN_CURSOR')
+                    
+                ## Remove doubles from code mesh
+                bpy.ops.object.mode_set(mode="EDIT")
+                for face in get_bmesh(codeobj).faces:
+                    face.select = True
+                bpy.ops.mesh.remove_doubles()   
+                bpy.ops.object.mode_set(mode="OBJECT")
                 
                 
-                ## Get width of code
-                code_w = max([vert.co.x for vert in codeobj.data.vertices]) - min([vert.co.x for vert in codeobj.data.vertices])
-                ## Scale code to the same size as the optimal square
-                multiplier = optimal_w / code_w
-                codeobj.scale.x *= multiplier
-                codeobj.scale.y *= multiplier
-                ## Move the code to the correct location on the model
-                codeobj.rotation_euler = optimal.rotation_euler#patch_rot
-                ## Move to code to the location of the optimal square
-                bpy.ops.object.select_all(action='DESELECT')
-                optimal.select_set(state = True)
-                bpy.context.view_layer.objects.active = optimal
-                bpy.ops.object.origin_set(type = "ORIGIN_GEOMETRY")
-                codeobj.location = optimal.location
+            ## Get width of code
+            code_w = max([vert.co.x for vert in codeobj.data.vertices]) - min([vert.co.x for vert in codeobj.data.vertices])
+            ## Scale code to the same size as the optimal square
+            multiplier = optimal_w / code_w
+            codeobj.scale.x *= multiplier
+            codeobj.scale.y *= multiplier
+            ## Move the code to the correct location on the model
+            codeobj.rotation_euler = optimal.rotation_euler#patch_rot
+            ## Move to code to the location of the optimal square
+            bpy.ops.object.select_all(action='DESELECT')
+            optimal.select_set(state = True)
+            bpy.context.view_layer.objects.active = optimal
+            bpy.ops.object.origin_set(type = "ORIGIN_GEOMETRY")
+            codeobj.location = optimal.location
 
             ####### KNIFE PROJECTION #######
             
@@ -1010,18 +1064,6 @@ class OBJECT_OT_optimalembed(Operator):
             locnorm = mathutils.Vector((x, y, z))
             ## Get the average global norm of the new surface
             norm = world @ locnorm 
-            ## Check if the user wants to embed a code
-            if self.usingloc:
-                projection.name = f"Optimal Location {iter + 1}"
-                """
-                projection.location += 0.1*norm
-                bpy.context.view_layer.objects.active = projection
-                mat = bpy.data.materials.new(name="Material")
-                projection.data.materials.append(mat)
-                projection.color = [0.8, 0.0, 0.0, 1.0]
-                """
-                iter += 1
-                continue
             
             ## Now, knife project the code
             proj_subject = codeobj
@@ -1032,6 +1074,13 @@ class OBJECT_OT_optimalembed(Operator):
             bpy.ops.object.duplicate()
             obj2 = bpy.context.object
             obj2.name = "CopyOriginal2"
+            
+            ## Remove doubles from object copy
+            ORIG_OBJ.select_set(state = False)
+            bpy.ops.object.mode_set(mode="EDIT")
+            bpy.ops.mesh.remove_doubles() 
+            bpy.ops.object.mode_set(mode="OBJECT")
+            
             bpy.ops.object.select_all(action='DESELECT')
             ## Select the subject
             proj_subject.select_set(state = True)
@@ -1051,17 +1100,11 @@ class OBJECT_OT_optimalembed(Operator):
             bpy.context.view_layer.objects.active = obj2
             bpy.ops.object.mode_set(mode="EDIT")
             bpy.ops.mesh.select_all(action='DESELECT')
-            """
-            ## Subdivide the object
-            bpy.ops.mesh.select_all(action='SELECT')
-            bpy.ops.mesh.subdivide(number_cuts = 12)
-            bpy.ops.mesh.select_all(action='DESELECT')
-            """
+
             proj_subject.select_set(state = True)
             ## redraw_timer updates the 3D view so that we are facing the front of the proj_subject
             ## This is important to knife_project, which projects in the direction of the 3d view
             bpy.ops.wm.redraw_timer(type='DRAW_WIN_SWAP', iterations=2)
-            #if patches[1] == patch: mybreak = 1/0 
             ## Project onto the model 
             bpy.ops.mesh.knife_project(override)
             ## Duplicate the projection as its own mesh in its own object
@@ -1194,11 +1237,18 @@ class OBJECT_OT_optimalembed(Operator):
             
             iter += 1
             
-
-        if not self.usingloc:
+        if not self.sequential:
             self.codemesh.select_set(state = True)
             bpy.context.view_layer.objects.active = self.codemesh
             bpy.ops.object.delete()
+            
+        for obj in bpy.data.objects:
+            if len(obj.name) > 10:
+                if obj.name[:7] == "Optimal":
+                    obj.select_set(state = True)
+                    bpy.context.view_layer.objects.active = obj
+                    bpy.ops.object.delete()
+
         return {'FINISHED'}
 
 
