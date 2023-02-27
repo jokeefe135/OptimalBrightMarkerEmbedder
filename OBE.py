@@ -326,6 +326,10 @@ def find_target_collection(obj, col):
     return None
 
 
+
+Global_Geometry_Data = [0, 0, 0]
+
+
 class OBJECT_OT_optimalembed(Operator):
     bl_label = "Optimal BrightMarker Embedder"
     bl_idname = "object.optimalembed"
@@ -422,6 +426,15 @@ class OBJECT_OT_optimalembed(Operator):
         default = False,
         description = "Check if you want to align your codes to a set local Z rotation",
     )
+    plane: bpy.props.EnumProperty(
+        name = "Plane",
+        description = "Select the plane you would like to align your codes to",
+        items = [
+            ('opxy', "XY", "XY Plane"),
+            ('opyz', "YZ", "YZ Plane"),
+            ('opxz', "XZ", "XZ Plane"),
+        ]
+    )
     alignangle: bpy.props.FloatProperty(
         name = "Angle (deg)",
         default = 0,
@@ -457,13 +470,6 @@ class OBJECT_OT_optimalembed(Operator):
         name = "End Point",
         default = (1, 1, 1),
         description = "The (x, y, z) end of the embedding line",
-    )
-    linelength: bpy.props.FloatProperty(
-        name = "Length of Line",
-        default = 0,
-        min = 0,
-        max = 5000,
-        description = "The length of the embedding line",
     )
     sidelength: bpy.props.FloatProperty(
         name = "Code Side Length",
@@ -509,11 +515,9 @@ class OBJECT_OT_optimalembed(Operator):
             row.prop(self, "maxfaces")
             row.prop(self, "sharpness")
             row.prop(self, "accuracy")
-            row.enabled = self.usingemb
             
             row = box.row()
             row.prop(self, "sequential")
-            row.enabled = self.usingemb
             
             if not self.sequential:
                 row = box.row()
@@ -522,29 +526,26 @@ class OBJECT_OT_optimalembed(Operator):
             
             row = box.row()
             row.prop(self, "offset")
-            row.enabled = self.usingemb
             
             row = box.row()
             row.prop(self, "thickness")
-            row.enabled = self.usingemb
             
             row = box.row()
             row.prop(self, "mins")
             row.prop(self, "maxs")
-            row.enabled = self.usingemb
             
             row = box.row()
             row.prop(self, "codes")
-            row.enabled = self.usingemb
             
             row = box.row()
             row.prop(self, "ignorebottom")
-            row.enabled = self.usingemb
             
             row = box.row()
             row.prop(self, "aligncode")
-            row.prop(self, "alignangle")
-            row.enabled = self.usingemb
+            if self.aligncode:
+                row = box.row()
+                row.prop(self, "plane")
+                row.prop(self, "alignangle")
             
             layout.row().separator()
         
@@ -566,13 +567,16 @@ class OBJECT_OT_optimalembed(Operator):
             if self.geometry == 'OP1':
                 row = box.row()
                 row.prop(self, "start")
-                row.enabled = self.usinggeometric
                 
                 row = box.row()
                 row.prop(self, "end")
                 
+                Global_Geometry_Data[0] = self.start
+                Global_Geometry_Data[1] = self.end
+                Global_Geometry_Data[2] = self.geometry
+                
                 row = box.row()
-                row.prop(self, "linelength")
+                row.operator("object.geometry_preview")
                 
             
             row = box.row()
@@ -640,8 +644,10 @@ class OBJECT_OT_optimalembed(Operator):
             
             row = box.row()
             row.prop(self, "aligncode")
-            row.prop(self, "alignangle")
-            row.enabled = self.usingman
+            if self.aligncode:
+                row = box.row()
+                row.prop(self, "plane")
+                row.prop(self, "alignangle")
             
             layout.row().separator()
 
@@ -900,14 +906,30 @@ class OBJECT_OT_optimalembed(Operator):
                 ## Center the square's origin
                 bpy.ops.object.origin_set(type='GEOMETRY_ORIGIN')
                 ## Get the vector for one of its sides
-                verts = optimal.data.vertices
+                verts = list(optimal.data.vertices)
                 mat = optimal.matrix_world
-                vec_1 = (mat @ verts[0].co).x - (mat @ verts[1].co).x, (mat @ verts[0].co).y - (mat @ verts[1].co).y
+                
+                if self.plane == "opxy":
+                    verts.sort(key = lambda vert : vert.co.z)
+                    plane_norm = (0, 0, 1)
+                if self.plane == "opyz":
+                    verts.sort(key = lambda vert : vert.co.x)
+                    plane_norm = (1, 0, 0)
+                if self.plane == "opxz":
+                    verts.sort(key = lambda vert : vert.co.y)
+                    plane_norm = (0, 1, 0)
+                
+                vec_1 = (mat @ verts[0].co).x - (mat @ verts[1].co).x, (mat @ verts[0].co).y - (mat @ verts[1].co).y, (mat @ verts[0].co).z - (mat @ verts[1].co).z
+                mag = (vec_1[0]**2 + vec_1[1]**2 + vec_1[2]**2)**0.5
+                vec_1_norm = (vec_1[0] / mag, vec_1[1] / mag, vec_1[2] / mag)
+                
                 ## Get its current local z rotation
-                ang = math.atan(vec_1[1]/vec_1[0])
+                ang = math.asin(np.dot(vec_1_norm, plane_norm))
+                #print(ang)
+                #ang = math.acos(np.dot(vec_1_norm, v_plane))
                 ## Rotate (subtract current rotation, add the user's desired rotation)
-                bpy.ops.transform.rotate(value=-ang + math.radians(self.alignangle), orient_axis='Z', orient_type='LOCAL', orient_matrix_type='LOCAL', constraint_axis=(False, False, True), mirror=False, use_proportional_edit=False, proportional_edit_falloff='SMOOTH', proportional_size=1, use_proportional_connected=False, use_proportional_projected=False, snap=False, snap_elements={'INCREMENT'}, use_snap_project=False, snap_target='CLOSEST', use_snap_self=True, use_snap_edit=True, use_snap_nonedit=True, use_snap_selectable=False, release_confirm=True)
-            
+                bpy.ops.transform.rotate(value=ang + math.radians(self.alignangle), orient_axis='Z', orient_type='LOCAL', orient_matrix_type='LOCAL', constraint_axis=(False, False, True), mirror=False, use_proportional_edit=False, proportional_edit_falloff='SMOOTH', proportional_size=1, use_proportional_connected=False, use_proportional_projected=False, snap=False, snap_elements={'INCREMENT'}, use_snap_project=False, snap_target='CLOSEST', use_snap_self=True, use_snap_edit=True, use_snap_nonedit=True, use_snap_selectable=False, release_confirm=True)
+        
             if not self.sequential: ## If the user is embedding their own code
                 codecol = bpy.data.collections.get(self.codename)
                 ## Join the curves in the code SVG only if this is the first iteration
@@ -1253,16 +1275,60 @@ class OBJECT_OT_optimalembed(Operator):
 
 
  
+class Preview(bpy.types.Operator):
+    """Tooltip"""
+    bl_idname = "object.geometry_preview"
+    bl_label = "Preview Geometry"
+    
+    data: bpy.props.IntVectorProperty(
+        name = "Data",
+        default = (0, 0, 0),
+    )
+
+    def execute(self, context):
+        
+        if Global_Geometry_Data[2] == "OP1": ## Linear geometry
+            [start, end, type] = Global_Geometry_Data
+            
+            if "GLine" in [obj.name for obj in bpy.data.objects]:
+                gline = bpy.data.objects["GLine"]
+            else:
+                active = bpy.context.object
+                bpy.ops.mesh.primitive_cube_add()
+                gline = bpy.context.object
+                gline.name = "GLine"
+                bpy.context.view_layer.objects.active = active
+            
+            len_line = ((end[0] - start[0])**2 + (end[1] - start[1])**2 + (end[2] - start[2])**2)**0.5
+            
+            offset = len_line / 200
+            gline.data.vertices[0].co = (start[0], start[1], start[2])
+            gline.data.vertices[1].co = (start[0] + offset, start[1] + offset, start[2])
+            gline.data.vertices[2].co = (start[0] + offset, start[1] - offset, start[2])
+            gline.data.vertices[3].co = (start[0] - offset, start[1] - offset, start[2])
+            gline.data.vertices[4].co = (end[0], end[1], end[2])
+            gline.data.vertices[5].co = (end[0] + offset, end[1] + offset, end[2])
+            gline.data.vertices[6].co = (end[0] + offset, end[1] - offset, end[2])
+            gline.data.vertices[7].co = (end[0] - offset, end[1] - offset, end[2])
+        
+        return {'FINISHED'}
+
+
+
+
+ 
 def menu_func(self, context):
     self.layout.operator(OBJECT_OT_optimalembed.bl_idname)
     
 def register():
     bpy.utils.register_class(OBJECT_OT_optimalembed)
     bpy.types.VIEW3D_MT_object.append(menu_func)
+    bpy.utils.register_class(Preview)
     
 def unregister():
     bpy.utils.unregister_class(OBJECT_OT_optimalembed)
     bpy.types.VIEW3D_MT_object.remove(menu_func)
+    bpy.utils.unregister_class(Preview)
     
 if __name__ == "__main__":
     register()
