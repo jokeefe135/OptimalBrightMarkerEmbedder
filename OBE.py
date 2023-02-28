@@ -325,9 +325,12 @@ def find_target_collection(obj, col):
     ## If this collection tree doesn't contain obj, return None
     return None
 
+def distance_between_vectors(v1, v2):
+    """
+    Calculate the distance between two Vectors.
+    """
+    return ((v1.x - v2.x)**2 + (v1.y - v2.y)**2 + (v1.z - v2.z)**2)**0.5
 
-
-Global_Geometry_Data = [0, 0, 0]
 
 
 class OBJECT_OT_optimalembed(Operator):
@@ -452,31 +455,12 @@ class OBJECT_OT_optimalembed(Operator):
         default = False,
         description = "Check if you are using this mode",
     )
-    geometry: bpy.props.EnumProperty(
-        name = "Geometry",
-        description = "Select the geometry you would like to use to embed",
-        items = [
-            ('OP1', "Linear", "Embed codes along a line"),
-            ('OP2', "Radial", "Embed codes along a ring"),
-            ('OP3', "Spherical", "Embed codes along a sphere"),
-        ]
-    )
-    start: bpy.props.FloatVectorProperty(
-        name = "Start Point",
-        default = (0, 0, 0),
-        description = "The (x, y, z) start of the embedding line",
-    )
-    end: bpy.props.FloatVectorProperty(
-        name = "End Point",
-        default = (1, 1, 1),
-        description = "The (x, y, z) end of the embedding line",
-    )
-    sidelength: bpy.props.FloatProperty(
-        name = "Code Side Length",
-        default = 0,
-        min = 0,
-        max = 5000,
-        description = "The side length of the embedded codes",
+    remscale: bpy.props.FloatProperty(
+        name = "Code Density",
+        default = 0.99,
+        min = 0.5,
+        max = 0.99,
+        description = "This sets the local Z rotation for all codes",
     )
     
 
@@ -553,7 +537,7 @@ class OBJECT_OT_optimalembed(Operator):
         
         box = layout.box()
         
-        box.label(text="Geometric Embedding")
+        box.label(text="Uniform / Geometric Embedding")
         
         row = box.row()
         row.prop(self, "usinggeometric")
@@ -561,23 +545,7 @@ class OBJECT_OT_optimalembed(Operator):
         
         if self.usinggeometric:
             row = box.row()
-            row.prop(self, "geometry")
-            row.enabled = self.usinggeometric
-            
-            if self.geometry == 'OP1':
-                row = box.row()
-                row.prop(self, "start")
-                
-                row = box.row()
-                row.prop(self, "end")
-                
-                Global_Geometry_Data[0] = self.start
-                Global_Geometry_Data[1] = self.end
-                Global_Geometry_Data[2] = self.geometry
-                
-                row = box.row()
-                row.operator("object.geometry_preview")
-                
+            row.prop(self, "remscale")
             
             row = box.row()
             row.prop(self, "sequential")
@@ -597,10 +565,15 @@ class OBJECT_OT_optimalembed(Operator):
             row.enabled = self.usinggeometric
             
             row = box.row()
-            row.prop(self, "sidelength")
+            row.prop(self, "mins")
+            row.prop(self, "maxs")
             
             row = box.row()
-            row.prop(self, "codes")
+            row.prop(self, "aligncode")
+            if self.aligncode:
+                row = box.row()
+                row.prop(self, "plane")
+                row.prop(self, "alignangle")
             
             layout.row().separator()
         
@@ -684,7 +657,109 @@ class OBJECT_OT_optimalembed(Operator):
         ## List to store the approx flat patches
         patches = []
         
-        if self.usingemb: # We don't want to find the locations in script if the user selected the manual option
+        if self.usinggeometric:
+            
+            bpy.ops.object.duplicate()
+            ORIG_OBJ_clean = bpy.context.object
+            
+            bpy.ops.object.modifier_add(type='REMESH')
+            ORIG_OBJ_clean.modifiers["Remesh"].mode = 'VOXEL'
+            vox_size = min(ORIG_OBJ.dimensions.x, ORIG_OBJ.dimensions.y, ORIG_OBJ.dimensions.z) / 65
+            ORIG_OBJ_clean.modifiers["Remesh"].voxel_size = vox_size
+            ORIG_OBJ_clean.modifiers["Remesh"].adaptivity = 0
+            bpy.ops.object.modifier_apply(modifier="Remesh")
+            
+            bpy.ops.object.duplicate()
+
+            remeshobj = bpy.context.object
+            bpy.ops.object.origin_set(type='ORIGIN_CENTER_OF_VOLUME', center='MEDIAN')
+
+            bpy.ops.object.modifier_add(type='REMESH')
+
+            remeshobj.modifiers["Remesh"].mode = 'SHARP'
+            remeshobj.modifiers["Remesh"].octree_depth = 2
+            remeshobj.modifiers["Remesh"].scale = self.remscale
+
+            bpy.ops.object.modifier_apply(modifier="Remesh")
+            
+            multiplier_xyz = (ORIG_OBJ.dimensions.x / remeshobj.dimensions.x, ORIG_OBJ.dimensions.y / remeshobj.dimensions.y, ORIG_OBJ.dimensions.z / remeshobj.dimensions.z)
+                
+            remeshobj.scale.x *= (multiplier_xyz[0] + 0.1)
+            remeshobj.scale.y *= (multiplier_xyz[1] + 0.1)
+            remeshobj.scale.z *= (multiplier_xyz[2] + 0.1)
+
+            bpy.context.view_layer.objects.active = ORIG_OBJ_clean
+            bpy.ops.object.mode_set(mode="EDIT")
+            bpy.ops.mesh.select_all(action='DESELECT')
+            objbm = bmesh.from_edit_mesh(ORIG_OBJ_clean.data)
+
+            ## Create kdtree
+            size = len(objbm.faces)
+            kd = mathutils.kdtree.KDTree(size)
+
+            for i, f in enumerate(objbm.faces):
+                kd.insert(f.calc_center_median(), i)
+                
+            kd.balance()
+
+            objfaces = objbm.faces
+            objfaces.ensure_lookup_table()
+
+            worldmat = remeshobj.matrix_world
+            
+            uniform_faces = []
+
+            for vert in remeshobj.data.vertices:
+                co, index, dist = kd.find(worldmat @ vert.co)
+                uniform_faces.append(objfaces[index])
+            
+            patchgroup_list = []
+            #pg_l_flat = []
+            for f in uniform_faces:
+                origin = f.calc_center_median()
+                bpy.ops.mesh.select_all(action='DESELECT')
+                f.select = True
+                bpy.ops.mesh.faces_select_linked_flat(sharpness=self.sharpness)
+                patchgroup = [face for face in objfaces if face.select and distance_between_vectors(origin, face.calc_center_median()) < self.maxs] #and face not in pg_l_flat
+                if sum(fc.calc_area() for fc in patchgroup) > self.mins**2:
+                    patchgroup_list.append(patchgroup)
+                #pg_l_flat += patchgroup                
+                
+            bpy.ops.mesh.select_all(action='DESELECT')
+            for ind, pg in enumerate(patchgroup_list):
+                for f in pg:
+                    f.select = True
+                
+                ## Duplicate the patch
+                bpy.ops.mesh.smart_duplicate()
+                copy = bpy.context.object 
+                copybm = get_bmesh(copy)
+                ## Select the faces in the copy
+                for face in copybm.faces:
+                    face.select = True
+                ## Flatten the copy
+                looptools.bpy.ops.mesh.looptools_flatten()
+                ## Assign flat patch object
+                patch = bpy.context.object
+                patch.name = f"Patch {ind+1}"
+                patches.append(patch)
+                
+            
+            ## Delete the clean copy of the original object
+            bpy.ops.object.mode_set(mode="OBJECT")
+            bpy.ops.object.select_all(action='DESELECT')
+            bpy.context.view_layer.objects.active = ORIG_OBJ_clean
+            ORIG_OBJ_clean.select_set(state = True)
+            bpy.ops.object.delete()
+            
+            ## Delete the remesh copy of the original object
+            bpy.ops.object.select_all(action='DESELECT')
+            bpy.context.view_layer.objects.active = remeshobj
+            remeshobj.select_set(state = True)
+            bpy.ops.object.delete()
+        
+        
+        elif self.usingemb: # We don't want to find the locations in script if the user selected the manual option
             bpy.ops.object.duplicate()
             objcopy = bpy.context.object
             ## Select obj
@@ -737,6 +812,7 @@ class OBJECT_OT_optimalembed(Operator):
             bpy.context.view_layer.objects.active = objcopy
             objcopy.select_set(state = True)
             bpy.ops.object.delete()
+        
         
         else: # If user chose locations (faces) manually
             
@@ -1016,21 +1092,6 @@ class OBJECT_OT_optimalembed(Operator):
 
             ####### KNIFE PROJECTION #######
             
-            ## Copy the original (un-decimated) object
-            bpy.ops.object.select_all(action='DESELECT')
-            bpy.context.view_layer.objects.active = ORIG_OBJ
-            ORIG_OBJ.select_set(state = True)
-            bpy.ops.object.duplicate()
-            orig_obj_copy = bpy.context.object
-            orig_obj_copy.name = "CopyORIG_OBJ"
-            
-            ## First, project the optimal square
-            proj_subject = optimal
-
-            ## Select the subject
-            proj_subject.select_set(state = True)
-            bpy.context.view_layer.objects.active = proj_subject
-            
             ## bpy.ops.mesh.knife_project() needs view3d context and an editmesh
             for area in bpy.context.screen.areas:
                 if area.type == 'VIEW_3D':
@@ -1040,52 +1101,9 @@ class OBJECT_OT_optimalembed(Operator):
                         if region.type == 'WINDOW':
                             override = {'area': area, 'region': region}
                     break
-            ## Align view to face the mesh being projected
-            bpy.ops.view3d.view_axis(override, type='TOP', align_active=True)
-            ## Configure active and selected objects
-            bpy.ops.object.select_all(action='DESELECT')
-            orig_obj_copy.select_set(state = True)
-            bpy.context.view_layer.objects.active = orig_obj_copy
-            bpy.ops.object.mode_set(mode="EDIT")
-            proj_subject.select_set(state = True)
             
             if space.region_3d.view_perspective == "PERSP":
                 bpy.ops.view3d.view_persportho(override)
-            
-            ## redraw_timer updates the 3D view so that we are facing the front of the proj_subject
-            ## This is important to knife_project, which projects in the direction of the 3d view
-            bpy.ops.wm.redraw_timer(type='DRAW_WIN_SWAP', iterations=1)
-            ## Project onto the model                    
-            bpy.ops.mesh.knife_project(override)
-            ## Duplicate the projection as its own mesh in its own object
-            bpy.ops.mesh.smart_duplicate()
-            ## Store the projected mesh as "projection"
-            projection = bpy.context.object
-            projection.name = f"Bounding Box {iter + 1}"
-            ## Deselect projection
-            projection.select_set(state = False)
-            ## Select and delete the flat proj_subject
-            bpy.ops.object.mode_set(mode="OBJECT")
-            bpy.context.view_layer.objects.active = proj_subject
-            proj_subject.select_set(state = True)
-            bpy.ops.object.delete()
-            ## Delete the object copy
-            bpy.context.view_layer.objects.active = orig_obj_copy
-            bpy.ops.object.mode_set(mode="OBJECT")
-            orig_obj_copy.select_set(state = True)
-            bpy.ops.object.delete()
-            ## Calculate the average normal of the projected optimal square
-            ## Get world matrix
-            world = projection.matrix_world
-            ## Get the average local norm of the new surface
-            verts = projection.data.vertices
-            d = len(verts)
-            x = sum(vert.normal[0] / d for vert in verts)
-            y = sum(vert.normal[1] / d for vert in verts)
-            z = sum(vert.normal[2] / d for vert in verts)
-            locnorm = mathutils.Vector((x, y, z))
-            ## Get the average global norm of the new surface
-            norm = world @ locnorm 
             
             ## Now, knife project the code
             proj_subject = codeobj
@@ -1148,58 +1166,27 @@ class OBJECT_OT_optimalembed(Operator):
             proj_subject.select_set(state = True)
             bpy.context.view_layer.objects.active = proj_subject
             bpy.ops.object.delete()
+            
+            ## Calculate the average normal of the projected code
+            ## Get world matrix
+            world = projectioncode.matrix_world
+            ## Get the average local norm of the new surface
+            verts = projectioncode.data.vertices
+            d = len(verts)
+            x = sum(vert.normal[0] / d for vert in verts)
+            y = sum(vert.normal[1] / d for vert in verts)
+            z = sum(vert.normal[2] / d for vert in verts)
+            locnorm = mathutils.Vector((x, y, z))
+            ## Get the average global norm of the new surface
+            norm = world @ locnorm 
 
             ####### EMBED AND EXTRUDE THE CODE #######
-            
-            ## I used the projected square to get the average normal. It's less unpredictable than an imported SVG.
-            
-            ## Embed the projected square
-            projection.location -= norm * self.offset
-            ## Duplicate to make the extrusion a solid object
-            bpy.context.view_layer.objects.active = projection
-            projection.select_set(state = True)
-            bpy.ops.object.duplicate_move()
-            projectionback = bpy.context.object
-
-            ## Flip projectionback's normals
-            bpy.ops.object.mode_set(mode="EDIT")
-            for face in get_bmesh(projectionback).faces:
-                face.select = True
-            bpy.ops.mesh.flip_normals()
-
-            bpy.ops.object.mode_set(mode="OBJECT")
-            bpy.ops.object.select_all(action='DESELECT')
-            ## Select the faces of the embedded square
-            bpy.context.view_layer.objects.active = projection
-            bpy.ops.object.mode_set(mode="EDIT")
-            projbm = get_bmesh(projection)
-            for face in projbm.faces:
-                face.select = True
-            ## Extrude
-            bpy.ops.mesh.extrude_faces_move(MESH_OT_extrude_faces_indiv={"mirror":False},\
-                TRANSFORM_OT_shrink_fatten={"value":-self.thickness, "use_even_offset":False, "mirror":False, \
-                "use_proportional_edit":False, "proportional_edit_falloff":'SMOOTH', \
-                "proportional_size":1, "use_proportional_connected":False, \
-                "use_proportional_projected":False, "snap":False, "release_confirm":False, \
-                "use_accurate":False})
-            """
-            ## Recalculate the bounding box's normals
-            for face in get_bmesh(projection).faces:
-                face.select = True
-            bpy.ops.mesh.normals_make_consistent(inside=True)
-            """
-            ## Join the extrusion and the duplicate back
-            bpy.ops.object.mode_set(mode="OBJECT")
-            obs = [projection, projectionback]
-            with bpy.context.temp_override(active_object=bpy.context.active_object, selected_editable_objects=obs):
-                bpy.ops.object.join()
-            
             
             ## Now extrude the code
             bpy.context.view_layer.objects.active = projectioncode   
             
             ## Embed the projected code
-            projectioncode.location = projection.location
+            projectioncode.location -= norm * self.offset
                
             ## Duplicate to make the extrusion a solid object      
             projectioncode.select_set(state = True)
@@ -1233,25 +1220,21 @@ class OBJECT_OT_optimalembed(Operator):
             with bpy.context.temp_override(active_object=bpy.context.active_object, selected_editable_objects=obs):
                 bpy.ops.object.join()
 
-            ####### MOVE CODES OFF TO THE SIDE OF THE OBJECT #######
-            """
-            ## Get the minimum x coordinate of the object
-            objminx = min(vert.co.x for vert in ORIG_OBJ.data.vertices)
-            ## Center the geometry
-            bpy.ops.object.select_all(action='DESELECT')
-            projectioncode.select_set(state = True)
+            ## Create the air gap
             bpy.context.view_layer.objects.active = projectioncode
-            bpy.ops.object.origin_set(type = "ORIGIN_GEOMETRY")
-            ## Now move the code
-            projectioncode.location = (objminx - self.optimal_w, 0, 1.1 * self.optimal_w * iter)
-            """
-            ####### DELETE OBJECTS WE DON'T NEED ANYMORE #######
+            projectioncode.select_set(state = True)
+            bpy.ops.object.duplicate_move()
+            airgap = bpy.context.object
+            airgap.name = f"Air Gap {iter + 1}"
             
-            """
-            projection.select_set(state = True)
-            bpy.context.view_layer.objects.active = projection
-            bpy.ops.object.delete()
-            """
+            bpy.ops.object.mode_set(mode="EDIT")
+            for face in get_bmesh(airgap).faces:
+                face.select = True
+            bpy.ops.mesh.flip_normals()
+            bpy.ops.object.mode_set(mode="OBJECT")
+
+            ####### DELETE OBJECTS WE DON'T NEED ANYMORE #######
+
             bpy.ops.object.select_all(action='DESELECT')
             obj2.select_set(state = True)
             bpy.context.view_layer.objects.active = obj2
@@ -1265,53 +1248,14 @@ class OBJECT_OT_optimalembed(Operator):
             bpy.ops.object.delete()
             
         for obj in bpy.data.objects:
-            if len(obj.name) > 10:
-                if obj.name[:7] == "Optimal":
+            if len(obj.name) > 5:
+                if obj.name[:6] == "Optima" or obj.name[:5] == "Patch":
                     obj.select_set(state = True)
                     bpy.context.view_layer.objects.active = obj
                     bpy.ops.object.delete()
 
         return {'FINISHED'}
 
-
- 
-class Preview(bpy.types.Operator):
-    """Tooltip"""
-    bl_idname = "object.geometry_preview"
-    bl_label = "Preview Geometry"
-    
-    data: bpy.props.IntVectorProperty(
-        name = "Data",
-        default = (0, 0, 0),
-    )
-
-    def execute(self, context):
-        
-        if Global_Geometry_Data[2] == "OP1": ## Linear geometry
-            [start, end, type] = Global_Geometry_Data
-            
-            if "GLine" in [obj.name for obj in bpy.data.objects]:
-                gline = bpy.data.objects["GLine"]
-            else:
-                active = bpy.context.object
-                bpy.ops.mesh.primitive_cube_add()
-                gline = bpy.context.object
-                gline.name = "GLine"
-                bpy.context.view_layer.objects.active = active
-            
-            len_line = ((end[0] - start[0])**2 + (end[1] - start[1])**2 + (end[2] - start[2])**2)**0.5
-            
-            offset = len_line / 200
-            gline.data.vertices[0].co = (start[0], start[1], start[2])
-            gline.data.vertices[1].co = (start[0] + offset, start[1] + offset, start[2])
-            gline.data.vertices[2].co = (start[0] + offset, start[1] - offset, start[2])
-            gline.data.vertices[3].co = (start[0] - offset, start[1] - offset, start[2])
-            gline.data.vertices[4].co = (end[0], end[1], end[2])
-            gline.data.vertices[5].co = (end[0] + offset, end[1] + offset, end[2])
-            gline.data.vertices[6].co = (end[0] + offset, end[1] - offset, end[2])
-            gline.data.vertices[7].co = (end[0] - offset, end[1] - offset, end[2])
-        
-        return {'FINISHED'}
 
 
 
@@ -1323,12 +1267,10 @@ def menu_func(self, context):
 def register():
     bpy.utils.register_class(OBJECT_OT_optimalembed)
     bpy.types.VIEW3D_MT_object.append(menu_func)
-    bpy.utils.register_class(Preview)
     
 def unregister():
     bpy.utils.unregister_class(OBJECT_OT_optimalembed)
     bpy.types.VIEW3D_MT_object.remove(menu_func)
-    bpy.utils.unregister_class(Preview)
     
 if __name__ == "__main__":
     register()
