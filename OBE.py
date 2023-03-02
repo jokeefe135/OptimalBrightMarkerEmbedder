@@ -1049,7 +1049,7 @@ class OBJECT_OT_optimalembed(Operator):
                     codeobj = bpy.context.object
             
             else: ## If the user is embedding sequential arucos
-                bpy.ops.import_curve.svg(filepath=f"Arucos/{iter}.svg")
+                bpy.ops.import_curve.svg(filepath=f"/Arucos/{iter}.svg")
                 codecol = bpy.data.collections.get(f"{iter}.svg")
                 
                 ## Convert all of the curves to meshes
