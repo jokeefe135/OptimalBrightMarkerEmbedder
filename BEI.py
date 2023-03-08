@@ -412,7 +412,7 @@ class OBJECT_OT_optimalembed(Operator):
         description = "Check if you are using this mode",
     )
     sidelength: bpy.props.FloatProperty(
-        name = "Side Length",
+        name = "Side length",
         default = 100,
         min = 0,
         max = 1000,
@@ -635,7 +635,7 @@ class OBJECT_OT_optimalembed(Operator):
         box.label(text="3. Marker Specifications")
         
         row = box.row()
-        row.label(text = "Marker and Shell Thickness:")
+        row.label(text = "Marker and shell thickness:")
         
         if not self.customoffset:
             row = box.row()
@@ -657,7 +657,7 @@ class OBJECT_OT_optimalembed(Operator):
             row.prop(self, "offset")
         
         row = box.row()
-        row.label(text = "Marker Size:")
+        row.label(text = "Marker size:")
         
         row = box.row(align=True)
         row.prop(self, "sidelength")
@@ -689,13 +689,13 @@ class OBJECT_OT_optimalembed(Operator):
         
         ## Color: (thickness, offset)
         colordict = {
-        'red': (0.1, 0.1), 
-        'green': (0.1, 0.1), 
-        'blue': (0.1, 0.1), 
-        'magenta': (0.1, 0.1), 
-        'black': (0.1, 0.1), 
-        'white': (0.1, 0.1),
-        'irtrans': (0.1, 0.1),
+        'red': (1.2, 0.9), 
+        'green': (1.2, 0.6), 
+        'blue': (1.2, 0.6), 
+        'magenta': (1.2, 0.8), 
+        'black': (1.2, 0.8), 
+        'white': (1.2, 0.6),
+        'irtrans': (1.2, 1.2),
         }
 
         ## We need a text editor window to create an override for remove_local_rotation
@@ -756,7 +756,8 @@ class OBJECT_OT_optimalembed(Operator):
                         number_of_patches = ind
                         break
             
-            for iter in range(number_of_patches):
+            
+            for iter in range(1, number_of_patches):
                 
                 if Whole_Object:
                     bpy.ops.mesh.select_all(action='DESELECT')
@@ -878,6 +879,7 @@ class OBJECT_OT_optimalembed(Operator):
 
         ## For sequential embedding with uniform mode
         self.uniform_aruco_iter = 0
+        self.uniform_aruco_iter_del = 0
         ## iter is just a counter for the following for loop. I know it has the same name as the iterable in the previous loops. Idc.
         iter = 0
         for patch in patches:
@@ -969,45 +971,9 @@ class OBJECT_OT_optimalembed(Operator):
                     bpy.ops.object.delete()
                     continue
                 """
-                
-                ## If the user wishes to set the local z rotation of the code(s)
-                if self.aligncode:
-                    bpy.context.view_layer.objects.active = optimal
-                    optimal.select_set(state = True)
-
-                    verts = get_bmesh(optimal).verts
-                    btmleft = max(verts, key = lambda vert : -vert.co.x - vert.co.y)
-                    btmright = max(verts, key = lambda vert : vert.co.x - vert.co.y)
-
-                    mat = optimal.matrix_world
-                    if self.plane == "opxy":
-                        plane_norm = (0, 0, 1)
-                    if self.plane == "opyz":
-                        plane_norm = (1, 0, 0)
-                    if self.plane == "opxz":
-                        plane_norm = (0, 1, 0)
-                        
-                    vec_1 = (
-                    (mat @ btmleft.co).x - (mat @ btmright.co).x, 
-                    (mat @ btmleft.co).y - (mat @ btmright.co).y, 
-                    (mat @ btmleft.co).z - (mat @ btmright.co).z
-                    )
-                    mag = (vec_1[0]**2 + vec_1[1]**2 + vec_1[2]**2)**0.5
-                    vec_1_norm = (vec_1[0] / mag, vec_1[1] / mag, vec_1[2] / mag)
-                        
-                    ## Get its current local z rotation
-                    ang = math.asin(np.dot(vec_1_norm, plane_norm))
-                        
-                    ## Center the square's origin
-                    bpy.ops.object.mode_set(mode="OBJECT")
-                    bpy.ops.object.origin_set(type='GEOMETRY_ORIGIN')
-                        
-                    ## Rotate (subtract current rotation, add the user's desired rotation)
-                    bpy.ops.transform.rotate(value=ang + math.radians(self.alignangle), orient_axis='Z', orient_type='LOCAL', orient_matrix_type='LOCAL', constraint_axis=(False, False, True), mirror=False, use_proportional_edit=False, proportional_edit_falloff='SMOOTH', proportional_size=1, use_proportional_connected=False, use_proportional_projected=False, snap=False, snap_elements={'INCREMENT'}, use_snap_project=False, snap_target='CLOSEST', use_snap_self=True, use_snap_edit=True, use_snap_nonedit=True, use_snap_selectable=False, release_confirm=True)
-                   
-            
             
             if self.usinggeometric and self.intermarker:
+                
                 ####### GET UNIFORM POINTS IN THE PATCH #######
                 
                 interdist = self.uniformdist if self.intermarker else self.sidelength / 15
@@ -1015,7 +981,7 @@ class OBJECT_OT_optimalembed(Operator):
                 units_between = int((self.sidelength + interdist) / interval)
                 #print (units_between)
                 
-                numrows = int(len(patcharray) / units_between)
+                numrows = int(len(patcharray) / (self.sidelength / interval))
                 
                 #print (f"total rows: {len(patcharray)}")
                 
@@ -1025,34 +991,34 @@ class OBJECT_OT_optimalembed(Operator):
                 for i in range (numrows):
                     row = edge_gap + int(units_between * i)
                     
-                    rowlist = list(patcharray[row])
-                    
-                    start = rowlist.index(1)
-                    end = len(rowlist) - list(reversed(rowlist)).index(1)
-                    
-                    cols = []
-                    col = start + edge_gap
-                    while True:
-                        if col > (end - edge_gap): break
-                        if rowlist[col] == 1:
-                            cols.append(col)
-                        else:
-                            col += rowlist[col:].index(1) + edge_gap
+                    if row < len(patcharray):
+                        rowlist = list(patcharray[row])
+                        
+                        start = rowlist.index(1)
+                        end = len(rowlist) - list(reversed(rowlist)).index(1)
+                        
+                        cols = []
+                        col = start + edge_gap
+                        while True:
                             if col > (end - edge_gap): break
-                            cols.append(col)
-                        col += units_between
-                    if cols:
-                        centershift = int(((end - edge_gap) - cols[len(cols) - 1])/2)
-                        for coln in cols:
-                            coln += centershift
-                            if patcharray[row - int(edge_gap / 2)][coln] == 1 and patcharray[row + int(edge_gap / 3)][coln] == 1:
-                                points.append((row, coln))
+                            if rowlist[col] == 1:
+                                cols.append(col)
+                            else:
+                                col += rowlist[col:].index(1) + edge_gap
+                                if col > (end - edge_gap): break
+                                cols.append(col)
+                            col += units_between
+                        if cols:
+                            centershift = int(((end - edge_gap) - cols[len(cols) - 1])/2)
+                            for coln in cols:
+                                coln += centershift
+                                if patcharray[row - int(edge_gap / 2)][coln] == 1 and patcharray[row + int(edge_gap / 3)][coln] == 1:
+                                    points.append((row, coln))
                 if points:
                     if points[0][1] != points[len(points) - 1][1]:
                         vertshift = int(((len(patcharray) - points[len(points) - 1][1]) - points[0][1])/2)
                         for rw, cn in points:
                             rw += vertshift
-                        
             
             
         
@@ -1105,7 +1071,7 @@ class OBJECT_OT_optimalembed(Operator):
                     bpy.ops.object.duplicate()
                     codeobj = bpy.context.object
             
-            elif self.sequential and self.usingman: ## If the user is embedding sequential arucos
+            elif self.sequential and (self.usingman or self.fixednum): ## If the user is embedding sequential arucos
                 bpy.ops.import_curve.svg(filepath=f"Arucos/{iter + self.startingat}.svg")
                 codecol = bpy.data.collections.get(f"{iter + self.startingat}.svg")
                 
@@ -1134,7 +1100,7 @@ class OBJECT_OT_optimalembed(Operator):
                 
                 
                 
-            if self.usinggeometric:
+            if self.usinggeometric and self.intermarker:
                 codes_to_embed = []
                 for pt in points:
                     if self.sequential: ## create the sequential codes within this loop
@@ -1176,50 +1142,13 @@ class OBJECT_OT_optimalembed(Operator):
                     bpy.ops.object.origin_set(type='ORIGIN_CURSOR')
                     codecopy.location = patch_loc
                     codecopy.rotation_euler = patch_rot
-                    
-                    verts = get_bmesh(codecopy).verts
-                    btmleft = max(verts, key = lambda vert : -vert.co.x - vert.co.y)
-                    btmright = max(verts, key = lambda vert : vert.co.x - vert.co.y)
-                    
-                    if self.aligncode:
-                        mat = codecopy.matrix_world
-                        if self.plane == "opxy":
-                            plane_norm = (0, 0, 1)
-                        if self.plane == "opyz":
-                            plane_norm = (1, 0, 0)
-                        if self.plane == "opxz":
-                            plane_norm = (0, 1, 0)
-                        
-                        vec_1 = (
-                        (mat @ btmleft.co).x - (mat @ btmright.co).x, 
-                        (mat @ btmleft.co).y - (mat @ btmright.co).y, 
-                        (mat @ btmleft.co).z - (mat @ btmright.co).z
-                        )
-                        mag = (vec_1[0]**2 + vec_1[1]**2 + vec_1[2]**2)**0.5
-                        vec_1_norm = (vec_1[0] / mag, vec_1[1] / mag, vec_1[2] / mag)
-                        
-                        ## Get its current local z rotation
-                        ang = math.asin(np.dot(vec_1_norm, plane_norm))
-                        
-                        ## Set origin to the center of the code
-                        bpy.context.scene.cursor.location = (
-                        (max((mat @ vert.co).x for vert in codecopy.data.vertices) + min((mat @ vert.co).x for vert in codecopy.data.vertices))/2, 
-                        (max((mat @ vert.co).y for vert in codecopy.data.vertices) + min((mat @ vert.co).y for vert in codecopy.data.vertices))/2,
-                        (max((mat @ vert.co).z for vert in codecopy.data.vertices) + min((mat @ vert.co).z for vert in codecopy.data.vertices))/2,
-                        )
-                        bpy.ops.object.mode_set(mode="OBJECT")
-                        bpy.ops.object.origin_set(type='ORIGIN_CURSOR')
-                        
-                        
-                        ## Rotate (subtract current rotation, add the user's desired rotation)
-                        bpy.ops.transform.rotate(value=ang + math.radians(self.alignangle), orient_axis='Z', orient_type='LOCAL', orient_matrix_type='LOCAL', constraint_axis=(False, False, True), mirror=False, use_proportional_edit=False, proportional_edit_falloff='SMOOTH', proportional_size=1, use_proportional_connected=False, use_proportional_projected=False, snap=False, snap_elements={'INCREMENT'}, use_snap_project=False, snap_target='CLOSEST', use_snap_self=True, use_snap_edit=True, use_snap_nonedit=True, use_snap_selectable=False, release_confirm=True)
-                   
+
                     bpy.ops.object.mode_set(mode="OBJECT")
                     codes_to_embed.append(codecopy)
                     self.uniform_aruco_iter += 1
                 
                 
-            if self.usingman:
+            if self.usingman or self.fixednum:
                 ## Get width of code
                 code_w = max([vert.co.x for vert in codeobj.data.vertices]) - min([vert.co.x for vert in codeobj.data.vertices])
                 ## Scale code to the same size as the optimal square
@@ -1235,6 +1164,7 @@ class OBJECT_OT_optimalembed(Operator):
                 bpy.ops.object.origin_set(type = "ORIGIN_GEOMETRY")
                 codeobj.location = optimal.location
 
+            
             ####### KNIFE PROJECTION #######
             
             ## bpy.ops.mesh.knife_project() needs view3d context and an editmesh
@@ -1261,6 +1191,56 @@ class OBJECT_OT_optimalembed(Operator):
             
                 ## Now, knife project the code
                 proj_subject = codes_to_embed[_] if self.usinggeometric and self.intermarker else codeobj
+                
+                if self.aligncode:
+                    bpy.ops.object.select_all(action='DESELECT')
+                    bpy.context.view_layer.objects.active = proj_subject
+                    proj_subject.select_set(state = True)
+                    
+                    verts = get_bmesh(proj_subject).verts
+                    btmleft = max(verts, key = lambda vert : -vert.co.x - vert.co.y)
+                    btmright = max(verts, key = lambda vert : vert.co.x - vert.co.y)
+                    
+                    mat = proj_subject.matrix_world
+                    if self.plane == "opxy":
+                        plane_norm = (0, 0, 1)
+                    if self.plane == "opyz":
+                        plane_norm = (1, 0, 0)
+                    if self.plane == "opxz":
+                        plane_norm = (0, 1, 0)
+                    
+                    vec_1 = (
+                    (mat @ btmleft.co).x - (mat @ btmright.co).x, 
+                    (mat @ btmleft.co).y - (mat @ btmright.co).y, 
+                    (mat @ btmleft.co).z - (mat @ btmright.co).z
+                    )
+                    mag = (vec_1[0]**2 + vec_1[1]**2 + vec_1[2]**2)**0.5
+                    vec_1_norm = (vec_1[0] / mag, vec_1[1] / mag, vec_1[2] / mag)
+                    
+                    ## Get its current local z rotation
+                    ang = math.asin(np.dot(vec_1_norm, plane_norm))
+                    
+                    ## Set origin to the center of the code
+                    bpy.context.scene.cursor.location = (
+                    (max((mat @ vert.co).x for vert in proj_subject.data.vertices) + min((mat @ vert.co).x for vert in proj_subject.data.vertices))/2, 
+                    (max((mat @ vert.co).y for vert in proj_subject.data.vertices) + min((mat @ vert.co).y for vert in proj_subject.data.vertices))/2,
+                    (max((mat @ vert.co).z for vert in proj_subject.data.vertices) + min((mat @ vert.co).z for vert in proj_subject.data.vertices))/2,
+                    )
+                    bpy.ops.object.mode_set(mode="OBJECT")
+                    bpy.ops.object.origin_set(type='ORIGIN_CURSOR')
+                    """
+                    if iter == 1:
+                        print (ang)
+                        print (vec_1)
+                        print(plane_norm)
+                        mybreak = 1/0
+                    """
+                    corrected_ang = 3.1415926 - abs(ang)
+                    if ang < 0:
+                        corrected_ang *= -1
+                    ## Rotate (subtract current rotation, add the user's desired rotation)
+                    bpy.ops.transform.rotate(value=corrected_ang + math.radians(self.alignangle), orient_axis='Z', orient_type='LOCAL', orient_matrix_type='LOCAL', constraint_axis=(False, False, True), mirror=False, use_proportional_edit=False, proportional_edit_falloff='SMOOTH', proportional_size=1, use_proportional_connected=False, use_proportional_projected=False, snap=False, snap_elements={'INCREMENT'}, use_snap_project=False, snap_target='CLOSEST', use_snap_self=True, use_snap_edit=True, use_snap_nonedit=True, use_snap_selectable=False, release_confirm=True) 
+
                 ## Create another copy of the original model to project onto
                 bpy.ops.object.select_all(action='DESELECT')
                 bpy.context.view_layer.objects.active = ORIG_OBJ
@@ -1308,6 +1288,7 @@ class OBJECT_OT_optimalembed(Operator):
                     if tmpobj != proj_subject:
                         projectioncode = tmpobj
                 projectioncode.name = f"Code Piece {iter + 1}"
+                
                 ## Remove double vertices
                 for face in get_bmesh(projectioncode).faces:
                     face.select = True
@@ -1315,11 +1296,21 @@ class OBJECT_OT_optimalembed(Operator):
                 #bpy.ops.wm.redraw_timer(type='DRAW_WIN_SWAP', iterations=2)
                 ## Deselect projection
                 projectioncode.select_set(state = False)
+                
+                
                 ## Select and delete the flat proj_subject
                 bpy.ops.object.mode_set(mode="OBJECT")
-                proj_subject.select_set(state = True)
-                bpy.context.view_layer.objects.active = proj_subject
-                bpy.ops.object.delete()
+                bpy.ops.object.select_all(action='DESELECT')
+                if self.usinggeometric and self.intermarker and self.sequential:
+                    collection = bpy.data.collections.get(f"{self.uniform_aruco_iter_del}.svg")
+                    for obj in collection.objects:
+                        bpy.data.objects.remove(obj, do_unlink=True)
+                    bpy.data.collections.remove(collection)
+                    self.uniform_aruco_iter_del += 1
+                else:
+                    codeobj.select_set(state = True)
+                    bpy.context.view_layer.objects.active = codeobj
+                    bpy.ops.object.delete()
                 
                 ## Calculate the average normal of the projected code
                 ## Get world matrix
@@ -1414,10 +1405,9 @@ class OBJECT_OT_optimalembed(Operator):
             
         for obj in bpy.data.objects:
             if len(obj.name) > 5:
-                if obj.name[:6] == "Optima" or obj.name[:5] == "Patch":
-                    obj.select_set(state = True)
-                    bpy.context.view_layer.objects.active = obj
-                    bpy.ops.object.delete()
+                if obj.name[:6] == "Optima" or obj.name[:5] == "Patch" or obj.name[:13] == "Selected Regi":
+                    bpy.data.objects.remove(obj, do_unlink=True)
+                
 
         return {'FINISHED'}
 
