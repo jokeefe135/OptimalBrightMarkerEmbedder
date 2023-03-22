@@ -757,7 +757,7 @@ class OBJECT_OT_optimalembed(Operator):
                         break
             
             
-            for iter in range(1, number_of_patches):
+            for iter in range(number_of_patches):
                 
                 if Whole_Object:
                     bpy.ops.mesh.select_all(action='DESELECT')
